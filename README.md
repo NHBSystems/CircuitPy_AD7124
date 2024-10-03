@@ -21,13 +21,14 @@ Basic API
 
 The init method takes a Chip Select pin and a previously configured SPI object  
 ```python
-def __init__(self, csPin, spi):
+def __init__(self, csPin, spi, baud = 4000000):
 ```
 Where
 | Arg           |  Description    |
 | -----------   | --------------- |
 |*cs*           | Chip Select pin |
-|*spi*          | Previously configured SPI object|  
+|*spi*          | Previously configured SPI object|
+|*baud*         | SPI clock frequency *(default = 4000000)*
 
 
 So, to create an instance...

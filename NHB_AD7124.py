@@ -629,7 +629,7 @@ class Ad7124:
         am moving on
         '''        
         
-        print("Attempt to reset by writing 64 1s")
+        #print("Attempt to reset by writing 64 1s")
         
         buff = bytearray([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF])
         #self.spi_write_and_read(buff)
@@ -639,13 +639,13 @@ class Ad7124:
             pass
 
         try:
-            self.spi.configure(self.baudrate, phase=1, polarity=1)           
+            self.spi.configure(baudrate=self.baudrate, phase=1, polarity=1)           
             self.spi.write(buff)  #NOTE: No CS       
         finally:
             self.spi.unlock()   
            
         
-        print("Waiting for power on")
+        #print("Waiting for power on")
         return self.wait_for_power_on(100)
     
     
@@ -825,7 +825,7 @@ class Ad7124:
                                                 _AD7124_ADC_CTRL_REG_DATA_STATUS | \
                                                 _AD7124_ADC_CTRL_REG_CS_EN
         
-        print (f"Writing {hex(self.regs[_AD7124_ADC_CTRL_REG].value)} to ADC control register")
+        #print (f"Writing {hex(self.regs[_AD7124_ADC_CTRL_REG].value)} to ADC control register")
         return self.write_register(self.regs[_AD7124_ADC_CTRL_REG])
     
     def read_ic_temp(self, ch: int):
@@ -1173,7 +1173,7 @@ class Ad7124:
             pass
 
         try:
-            self.spi.configure(self.baudrate, phase=1, polarity=1)
+            self.spi.configure(baudrate=self.baudrate, phase=1, polarity=1)
             self.cs.value = False
             self.spi.write_readinto(buff, buff) #This worked for micropython, but will it work for circuitpy?
             self.cs.value = True
