@@ -1,6 +1,6 @@
 # The MIT License (MIT)
 #
-# Copyright (c) 2024 Jaimy Juliano, NHBSystems
+# Copyright (c) 2024 Jaimy Juliano, NHB Systems
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,45 @@
 # THE SOFTWARE.
 #
 
+"""
+CircuitPython driver for the Analog Devices AD7124-4 24-bit Delta-Sigma ADC.
+
+The AD7124-4 is a 4-channel (4 differential or 7 single-ended), 24-bit,
+low-noise analog-to-digital converter with integrated PGA and digital filter.
+
+This driver provides:
+- Simple high-level API for ADC configuration and data readout
+- Support for 8 independent setup configurations
+- Automatic data and status readout
+- Built-in temperature sensor support
+- Full bridge (load cell, pressure) sensor support
+
+Example usage:
+
+.. code-block:: python
+
+    import board
+    import busio
+    import digitalio
+    from CircuitPy_AD7124 import nhb_ad7124
+    
+    # Create SPI bus and chip select
+    spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+    cs = digitalio.DigitalInOut(board.A0)
+    
+    # Initialize ADC
+    adc = nhb_ad7124.Ad7124(spi, cs)
+    
+    # Configure and read
+    adc.setup[0].set_config(nhb_ad7124.AD7124_Ref_Internal, 
+                            nhb_ad7124.AD7124_Gain_1, True)
+    adc.set_channel(0, 0, nhb_ad7124.AD7124_Input_AIN0, 
+                    nhb_ad7124.AD7124_Input_AIN1, True)
+    
+    voltage = adc.read_volts(0)
+    print(f"Channel 0: {voltage:.4f}V")
+"""
+
 
 #from machine import Pin, SPI
 import board
@@ -28,6 +67,7 @@ import busio
 import digitalio
 import time
 import adafruit_ticks
+from adafruit_bus_device.spi_device import SPIDevice
 
 
 try:
@@ -384,18 +424,31 @@ AD7124_ExCurrent_1mA    = const(0x06)
 
 # Device register info
 class Ad7124_Register:
-    '''
-    Class representation of a register on the AD7124. This is a simple struct
-    in the C++ library.
-    '''    
-    def __init__(self, addr: int, value: int, size: int, rw: int):
-      self.addr = addr
-      self.value = value
-      self.size = size
-      self.rw = rw
+    """
+    Internal class representation of an AD7124 register.
+    
+    Stores register metadata including address, current value, size, and access mode.
+    This is used internally for register read/write operations.
+    
+    :param int addr: Register address (0x00-0x38)
+    :param int value: Current register value
+    :param int size: Register size in bytes (1-3)
+    :param int rw: Register access mode (_AD7124_R, _AD7124_W, or _AD7124_RW)
+    """
+    def __init__(self, addr: int, value: int, size: int, rw: int) -> None:
+        self.addr = addr
+        self.value = value
+        self.size = size
+        self.rw = rw
 
 class Ad7124SetupVals:
-    def __init__(self):
+    """
+    Internal class to hold configuration values for an AD7124 setup.
+    
+    Each setup can be independently configured with different reference sources,
+    gains, filters, and calibration coefficients.
+    """
+    def __init__(self) -> None:
         self.ref = AD7124_Ref_ExtRef1
         self.gain = AD7124_Gain_1
         self.bipolar = True
@@ -410,17 +463,37 @@ class Ad7124SetupVals:
         self.refV = 2.500
 
 class Ad7124Setup:
-    '''Subclass to manage AD7124 "setups"'''
+    """
+    Manages a single AD7124 setup configuration.
+    
+    The AD7124 has 8 independent setups that can be configured with different
+    reference sources, gains, filters, and calibration values. Each channel can
+    be assigned to use a particular setup.
+    
+    :param Ad7124 driver: Reference to parent Ad7124 driver instance
+    :param int index: Setup number (0-7)
+    """
 
-    def __init__(self, driver, index):
+    def __init__(self, driver: "Ad7124", index: int) -> None:
         self._setup_number = index
         self._driver = driver
         self.setup_values = Ad7124SetupVals()
     
-    def set_config(self, ref_source, gain, bipolar: bool, 
-                   burnout = AD7124_Burnout_Off, 
-                   exRefV: float = 2.50):
-        '''Sets configuration register values'''
+    def set_config(self, ref_source: int, gain: int, bipolar: bool,
+                   burnout: int = AD7124_Burnout_Off,
+                   exRefV: float = 2.50) -> int:
+        """
+        Configure the setup's analog input and reference settings.
+        
+        :param int ref_source: Reference source (AD7124_Ref_ExtRef1, AD7124_Ref_ExtRef2,
+                                AD7124_Ref_Internal, AD7124_Ref_Avdd)
+        :param int gain: PGA gain setting (AD7124_Gain_1 through AD7124_Gain_128)
+        :param bool bipolar: True for bipolar ±Vref/Gain, False for unipolar 0 to Vref/Gain
+        :param int burnout: Burnout current source setting (default: AD7124_Burnout_Off)
+        :param float exRefV: External reference voltage in volts (default: 2.50V)
+        
+        :return: 0 on success, error code on failure
+        """
 
         self.setup_values.ref = ref_source
         self.setup_values.gain = gain
@@ -442,11 +515,20 @@ class Ad7124Setup:
         return self._driver.write_register(self._driver.regs[reg])
         
 
-    # Not sure what to do about type hints here?
-    def set_filter(self, filter, fs, 
-                   post_filter = AD7124_PostFilter_NoPost,
-                   rej60: bool = False, single_cycle: bool = False):
-        '''Sets the filter type and output word rate for a setup'''
+    def set_filter(self, filter: int, fs: int,
+                   post_filter: int = AD7124_PostFilter_NoPost,
+                   rej60: bool = False, single_cycle: bool = False) -> int:
+        """
+        Configure the setup's filter type and output data rate.
+        
+        :param int filter: Filter type (AD7124_Filter_SINC4, AD7124_Filter_SINC3, etc.)
+        :param int fs: Filter select bits for output data rate (1-2047)
+        :param int post_filter: Post-filter option (default: AD7124_PostFilter_NoPost)
+        :param bool rej60: Enable simultaneous 50/60 Hz rejection (default: False)
+        :param bool single_cycle: Enable single cycle conversion mode (default: False)
+        
+        :return: 0 on success, error code on failure
+        """
         
         self.setup_values.filter = filter
         self.setup_values.fs = fs
@@ -480,67 +562,48 @@ class Ad7124Setup:
         Sets the gain calibration value for a setup
         NOT YET IMPLEMENTED
         '''
-        pass
-
-    # These are probably not necessary in python, but even if they are, they
-    # need different naming
-    # def refV(self):
-    #     '''Returns the reference voltage for a setup'''
-        
-    #     pass
-    
-    # def gain(self):
-    #     '''Returns the gain for a setup'''
-        
-    #     pass
-    
-    # def bipolar(self):
-    #     '''Return whether we are using bipolar mode'''
-        
-        pass
+        pass  
     
 
 class Ad7124:
-    def __init__(self, csPin, spi, baud = 4000000):
+    def __init__(self, spi, cs_pin, baudrate=4000000):
         
         '''
-        Initializes the AD7124 class and set up the SPI interface. 
+        Initializes the AD7124 class and set up the SPI interface using SPIDevice.
+        
+        Args:
+            spi: A pre-configured busio.SPI object
+            cs_pin: A DigitalInOut object for chip select
+            baudrate: SPI clock frequency (default = 4000000)
         '''
 
-        #TODO Add data rate arg. Right now the baud rate is hard coded -ugly
-        
-        self.spi = spi # Might just work with circuitPy, we'll see
+        # Create SPIDevice instance for bus management and locking
+        self.spi_device = SPIDevice(
+            spi, 
+            cs_pin, 
+            cs_active_value=False,
+            baudrate=baudrate, 
+            polarity=1, 
+            phase=1
+        )
 
-        #self.cs = Pin(csPin, mode=Pin.OUT, value=1)  # Create chip-select on csPin        
-        self.cs = digitalio.DigitalInOut(csPin)
-        self.cs.direction = digitalio.Direction.OUTPUT
-        self.cs.value = True
-
-        self.baudrate = baud
-
-        #self.thermocouple = TC #Not implemented yet
-        
         self._crc_enabled = False
         self.opmode = AD7124_OpMode_SingleConv
 
         self.setup = []    
         
         for i in range(8):
-            self.setup.append(Ad7124Setup(self,i))
+            self.setup.append(Ad7124Setup(self, i))
         
         
-        # I have to do this silly crap because MicroPython allocates small
-        # temporary buffers on the heap, but the read methods for the SPI class 
-        # don't let you specify a number of bytes, so you can't just use one 
-        # static buffer for different size transactions without jumping through 
-        # hoops. See -> https://forum.micropython.org/viewtopic.php?f=20&t=11029
+        # Pre-allocated buffers for SPI transactions
         self.spi_buffer = bytearray(8)
         self.spi_buf_mv = memoryview(self.spi_buffer)  
-        self.spi_buf_2 = self.spi_buf_mv[:2] # Always need 1 more tha reg.size (2 more if CRC enabled ??)
+        self.spi_buf_2 = self.spi_buf_mv[:2]
         self.spi_buf_3 = self.spi_buf_mv[:3]
         self.spi_buf_4 = self.spi_buf_mv[:4]
         self.spi_buf_5 = self.spi_buf_mv[:5]
-        self.spi_buffs = (self.spi_buf_2, self.spi_buf_3, self.spi_buf_4,self.spi_buf_5)
+        self.spi_buffs = (self.spi_buf_2, self.spi_buf_3, self.spi_buf_4, self.spi_buf_5)
         
         # Temporary reg struct for data with extra byte to hold status bits
         self.reg_data_and_status = Ad7124_Register(0x02, 0x0000, 4, 2)
@@ -611,15 +674,15 @@ class Ad7124:
             Ad7124_Register(0x38, 0x500000, 3, 1), # Gain_7
         ]
     
-        self.reset() #Not sure if this actually does anything, see note below
-        time.sleep(0.1) #No sleep_ms() in CircuitPy  
+        self.reset()
+        time.sleep(0.1)  
     
         
     def reset(self):
         '''
         Write 64 1s to reset the chip.
         This currently doesn't work as expected. When called, everything
-        read after the call has it's last bit set to 1. It's very strange and 
+        read after the call has its last bit set to 1. It's very strange and 
         I just can't figure out what is going on. Actually, on a fresh read of 
         the datasheet, it looks like this may not be necessary anyway. It looks
         like (1) simply bringing CS high resets the communications interface 
@@ -629,56 +692,74 @@ class Ad7124:
         am moving on
         '''        
         
-        #print("Attempt to reset by writing 64 1s")
+        buff = bytearray([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
         
-        buff = bytearray([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF])
-        #self.spi_write_and_read(buff)
-        #self.spi.write(buff) #NOTE: No CS 
-
-        while not self.spi.try_lock():
-            pass
-
-        try:
-            self.spi.configure(baudrate=self.baudrate, phase=1, polarity=1)           
-            self.spi.write(buff)  #NOTE: No CS       
-        finally:
-            self.spi.unlock()   
+        with self.spi_device as spi:
+            spi.write(buff)  # Write without using standard transaction (CS stays high)
            
-        
-        #print("Waiting for power on")
         return self.wait_for_power_on(100)
     
     
-    def get_ID(self):
+    def get_ID(self) -> int:
+        """
+        Read and return the AD7124 device ID.
+        
+        :return: Device ID value from the ID register
+        """
         self.read_register(self.regs[_AD7124_ID_REG])
-        #print(f"ID reg = {hex(self.regs[_AD7124_ID_REG].value)}")
         return self.regs[_AD7124_ID_REG].value
+    
+    @property
+    def status(self) -> int:
+        """
+        Read the current ADC status register.
+        
+        Contains information about the active channel, power-on reset status,
+        and error conditions.
+        
+        :return: Current status register value
+        """
+        self.read_register(self.regs[_AD7124_STATUS_REG])
+        return self.regs[_AD7124_STATUS_REG].value
+    
+    @property  
+    def is_ready(self) -> bool:
+        """
+        Check if conversion data is ready.
+        
+        :return: True if data is ready to be read, False otherwise
+        """
+        self.read_register(self.regs[_AD7124_STATUS_REG])
+        return not bool(self.regs[_AD7124_STATUS_REG].value & _AD7124_STATUS_REG_RDY)
         
     
-    def setPWRSW(self, enabled):
-        self.regs[_AD7124_IO_CTRL1_REG].value &= ~_AD7124_IO_CTRL1_REG_PDSW
+    def setPWRSW(self, enabled: bool) -> int:
+        """
+        Control the low-side power switch (PSW pin).
         
+        On NHB Systems AD7124 boards, this pin controls a 2.5V linear regulator
+        for sensor excitation. Can be used in custom designs to switch external
+        power loads (limited to 30mA).
+        
+        :param bool enabled: True to close switch, False to open switch
+        
+        :return: 0 on success, error code on failure
+        """
+        self.regs[_AD7124_IO_CTRL1_REG].value &= ~_AD7124_IO_CTRL1_REG_PDSW
         
         if enabled:
             self.regs[_AD7124_IO_CTRL1_REG].value |= _AD7124_IO_CTRL1_REG_PDSW
-            
-            
-            
-        #print(f" PSW reg value: {hex(self.regs[_AD7124_IO_CTRL1_REG].value)}")
         
         return self.write_register(self.regs[_AD7124_IO_CTRL1_REG])
     
 
-    def wait_for_power_on(self, timeout=None):        
+    def wait_for_power_on(self, timeout: int = None) -> bool:
         """
-        Waits until the AD7124 completes its power-on reset (POR).
-
-        Args:
-            timeout: Optional timeout in milliseconds. Defaults to waiting indefinitely.
-
-        Returns:
-            True if POR completed successfully, False if timeout occurred or an error
-            encountered.
+        Wait for the AD7124 power-on reset (POR) to complete.
+        
+        :param int timeout: Optional timeout in milliseconds (None = no timeout)
+        
+        :return: True if POR completed, False/error code if timeout occurred
         """
         powered_on = False
         start_time = adafruit_ticks.ticks_ms()
@@ -707,9 +788,17 @@ class Ad7124:
         raise RuntimeError("Unexpected error!")
 
 
-    # Enables the bias voltage generator on the given pin. A bias voltage
-    # is necessary to read truly bipolar output from thermocouples 
-    def set_vbias(self, vBiasPin, enabled):    
+    def set_vbias(self, vBiasPin: int, enabled: bool) -> int:
+        """
+        Enable or disable bias voltage on a pin.
+        
+        Bias voltage is necessary for truly bipolar measurements (e.g., thermocouples).
+        
+        :param int vBiasPin: VBIAS pin to control
+        :param bool enabled: True to enable bias, False to disable
+        
+        :return: 0 on success, error code on failure
+        """    
 
         self.regs[_AD7124_IO_CTRL2_REG].value &= ~(1 << vBiasPin)
 
@@ -723,9 +812,16 @@ class Ad7124:
     #########################################################
     # WIP
 
-    #Get a reading in raw counts from a single channel
-    def read_raw(self, ch: int) -> uint:
-  
+    def read_raw(self, ch: int) -> int:
+        """
+        Read raw ADC counts from a channel.
+        
+        Returns the 24-bit unsigned ADC conversion result without any scaling.
+        
+        :param int ch: Channel number to read (0-15)
+        
+        :return: Raw ADC counts (0 to 16777215), or negative error code
+        """
         cur_ch = self.current_channel() # <-- Remember, this only works properly when using Data + Status mode
         
         #print(f"<read_raw> cur_ch = {cur_ch}, ch = {ch}")
@@ -782,10 +878,19 @@ class Ad7124:
 
     
     
-    def read_volts(self, ch: int):
-        '''Get a reading in voltage from a single channel.'''
-           
-        return self.to_volts(self.read_raw(ch),ch)
+    def read_volts(self, ch: int) -> float:
+        """
+        Read voltage from a channel.
+        
+        Converts raw ADC counts to voltage based on the channel's setup
+        configuration (reference voltage and gain). For proper results, ensure
+        the external reference voltage is correctly set via set_config().
+        
+        :param int ch: Channel number to read (0-15)
+        
+        :return: Voltage in volts (float)
+        """
+        return self.to_volts(self.read_raw(ch), ch)
         
     # *** Not working yet ***
     # def read_tc(self, ch: int, ref_temp: float, type: int):
@@ -796,26 +901,37 @@ class Ad7124:
     #     return self.thermocouple.volts_to_tempC(self.read_volts(ch), ref_temp, type)
         
 
-    def read_fb(self, ch: int, vEx: float, scale_factor: float = 1.00):
-        '''
-        Read a 4 wire full bridge sensor. Return value can be scaled with
-        optional scaleFactor arg. Returns mV/V if scale factor is one (default)
-        '''
+    def read_fb(self, ch: int, vEx: float, scale_factor: float = 1.00) -> float:
+        """
+        Read a 4-wire full-bridge sensor (load cell, pressure, etc.).
+        
+        Calculates the bridge output as millivolts per volt of excitation.
+        Optionally applies a linear scaling factor.
+        
+        :param int ch: Channel number (must be configured for full-bridge sensor)
+        :param float vEx: Excitation voltage in volts
+        :param float scale_factor: Linear scaling factor (default: 1.0 = mV/V)
+        
+        :return: Scaled sensor reading
+        """
         return ((self.read_volts(ch) * 1000.0) / vEx) * scale_factor
     
 
     def set_adc_control(self, mode: int, power_mode: int, ref_en: bool, 
-                        clk_sel: int = AD7124_Clk_Internal):
-        '''
-        Sets up the ADC control register
-
-        Args:
-            mode:          The operating mode to set device to
-            power_mode:    Power mode (Low, Mid, Full)
-            ref_en (bool): Enable the internal reference voltage
-            clk_sel:       Set the clock source        
+                        clk_sel: int = AD7124_Clk_Internal) -> int:
+        """
+        Configure global ADC settings.
         
-        '''
+        Sets the operating mode, power mode, reference enable, and clock source
+        for the ADC. This method always enables Data+Status mode.
+        
+        :param int mode: Operating mode (AD7124_OpMode_* constants)
+        :param int power_mode: Power mode (AD7124_LowPower, AD7124_MidPower, AD7124_FullPower)
+        :param bool ref_en: Enable internal reference voltage
+        :param int clk_sel: Clock source (default: AD7124_Clk_Internal)
+        
+        :return: 0 on success, error code on failure
+        """
         
         #NOTE: We always uses Data + Status mode
         self.regs[_AD7124_ADC_CTRL_REG].value = _AD7124_ADC_CTRL_REG_MODE(mode) | \
@@ -825,20 +941,30 @@ class Ad7124:
                                                 _AD7124_ADC_CTRL_REG_DATA_STATUS | \
                                                 _AD7124_ADC_CTRL_REG_CS_EN
         
-        #print (f"Writing {hex(self.regs[_AD7124_ADC_CTRL_REG].value)} to ADC control register")
         return self.write_register(self.regs[_AD7124_ADC_CTRL_REG])
     
-    def read_ic_temp(self, ch: int):
-        '''
-        Read the on chip temp sensor. 
-        NOTE: The channel must first be setup properly
-        for reading thermocouples. 
-        '''
+    def read_ic_temp(self, ch: int) -> float:
+        """
+        Read the on-chip temperature sensor.
+        
+        The channel must be configured to read the internal temperature sensor
+        (with AD7124_Input_TEMP as the positive input).
+        
+        :param int ch: Channel configured for internal temperature sensor
+        
+        :return: Temperature in degrees Celsius
+        """
         return self.scale_ic_temp(self.read_raw(ch))
 
 
-    def set_mode(self, mode: int):
-        '''Control the mode of operation for ADC'''
+    def set_mode(self, mode: int) -> int:
+        """
+        Set the ADC operating mode.
+        
+        :param int mode: Operating mode (AD7124_OpMode_*)
+        
+        :return: 0 on success, error code on failure
+        """
 
         self.opmode = mode
         
@@ -855,18 +981,18 @@ class Ad7124:
 
     
     def set_channel(self, ch: int, setup: int, aiPos: int,
-                   aiNeg: int, enable: bool):
-        '''
-        Configure a channel
-
-        Args:
-            ch (int):                Channel to configure
-            setup (Ad7124Setup):     Setup to use for channel
-            aiPos (AD7124_InputSel): Physical pin, or internal source for AIN +
-            aiNeg (AD7124_InputSel): Physical pin, or internal source for AIN -
-            enable (bool):           enable/disable channel
-
-        '''
+                    aiNeg: int, enable: bool) -> int:
+        """
+        Configure a channel's input pins and associated setup.
+        
+        :param int ch: Channel number (0-15)
+        :param int setup: Setup configuration to use (0-7)
+        :param int aiPos: Positive input (AD7124_Input_* or AIN0-AIN15)
+        :param int aiNeg: Negative input (AD7124_Input_* or AIN0-AIN15)
+        :param bool enable: True to enable channel, False to disable
+        
+        :return: 0 on success, error code on failure
+        """
 
         if ((ch < 16) and (setup < 8)):
         
@@ -878,20 +1004,20 @@ class Ad7124:
                                   _AD7124_CH_MAP_REG_AINM(aiNeg) | \
                                   (_AD7124_CH_MAP_REG_CH_ENABLE if enable else 0)
 
-            #print (f"Writing {hex(self.regs[ch].value)} to the {hex(ch)} register")
             return self.write_register(self.regs[ch])
         
         return -1
 
 
-    def enable_channel(self, ch: int, enable: bool): 
-        '''
-        Enable/Deisable a channel
-
-        Args:
-            ch (int):
-            enabled (bool):  Enabled (True) or disabled (False)
-        '''
+    def enable_channel(self, ch: int, enable: bool) -> int:
+        """
+        Enable or disable a channel.
+        
+        :param int ch: Channel number (0-15)
+        :param bool enable: True to enable, False to disable
+        
+        :return: 0 on success, error code on failure
+        """
 
         if (ch < 16): 
         
@@ -917,9 +1043,15 @@ class Ad7124:
 
 
     def enabled(self, ch: int) -> bool:
-        ''' Simply returns if a channel is enabled or not'''
+        """
+        Check if a channel is enabled.
+        
+        :param int ch: Channel number (0-15)
+        
+        :return: True if enabled, False if disabled
+        """
         ch += _AD7124_CH0_MAP_REG  
-        return (self.regs[ch].value & _AD7124_CH_MAP_REG_CH_ENABLE) >> 15     
+        return bool((self.regs[ch].value & _AD7124_CH_MAP_REG_CH_ENABLE) >> 15)     
 
     # Unused?
     # def status(self):
@@ -928,8 +1060,14 @@ class Ad7124:
 
 
     
-    def channel_setup(self, ch: int):
-        ''' Returns the setup number used by the channel '''
+    def channel_setup(self, ch: int) -> int:
+        """
+        Get the setup number assigned to a channel.
+        
+        :param int ch: Channel number (0-15)
+        
+        :return: Setup number (0-7), or -1 if invalid
+        """
 
         if (ch < _AD7124_MAX_CHANNELS):    
             
@@ -941,8 +1079,14 @@ class Ad7124:
         return -1
     
 
-    def current_channel(self): 
-        '''Returns the currently active channel'''   
+    def current_channel(self) -> int:
+        """
+        Get the currently active ADC channel.
+        
+        Only accurate when Data+Status mode is enabled.
+        
+        :return: Current channel number (0-15)
+        """   
         return self.regs[_AD7124_STATUS_REG].value & 0x0F
     
 
@@ -972,8 +1116,18 @@ class Ad7124:
         
 
     
-    def to_volts(self, value: int, ch: int):
-        '''Convert raw ADC data to volts'''
+    def to_volts(self, value: int, ch: int) -> float:
+        """
+        Convert raw ADC counts to voltage.
+        
+        Applies the setup's reference voltage and gain settings to convert
+        raw ADC data to volts. Handles both unipolar and bipolar modes.
+        
+        :param int value: Raw ADC count value
+        :param int ch: Channel number (for setup lookup)
+        
+        :return: Voltage value in volts
+        """
     
         #voltage = value
         idx = self.channel_setup(ch)
@@ -1013,17 +1167,31 @@ class Ad7124:
         
 
     
-    def scale_ic_temp(self,value):
-        '''
-        Convert raw value from IC temperature sensor to degrees C        
-        Conversion from datasheet https://www.analog.com/media/en/technical-documentation/data-sheets/AD7124-4.pdf       
-        '''        
+    def scale_ic_temp(self, value: int) -> float:
+        """
+        Convert raw IC temperature sensor value to Celsius.
+        
+        Uses the conversion formula from the AD7124 datasheet:
+        Temp(°C) = ((RAW - 0x800000) / 13548) - 272.5
+        
+        :param int value: Raw temperature sensor reading
+        
+        :return: Temperature in degrees Celsius
+        """        
         return ((value - 0x800000) / 13548.00) - 272.5
         
 
     
-    def wait_for_conv_ready(self,timeout):
-        '''Waits until a new conversion result is available.'''    
+    def wait_for_conv_ready(self, timeout: int) -> int:
+        """
+        Wait until the ADC conversion result is ready.
+        
+        Polls the status register's RDY bit. Blocks until data is ready or timeout.
+        
+        :param int timeout: Timeout in milliseconds
+        
+        :return: True if ready, or negative error code on timeout
+        """    
     
         start_time = adafruit_ticks.ticks_ms()
 
@@ -1047,11 +1215,16 @@ class Ad7124:
 
     ##########################################################
 
-    def no_check_read_register(self, reg: Ad7124_Register):
-        '''
-        Reads the value of the specified register without checking if the
-        device is ready. Updates reg.value in place
-        '''
+    def no_check_read_register(self, reg: Ad7124_Register) -> int:
+        """
+        Read a register without checking if device is ready.
+        
+        Updates the register value in-place. Internal method.
+        
+        :param Ad7124_Register reg: Register to read
+        
+        :return: 0 on success, error code on failure
+        """
         #print("no_check_read_register:")
         
         if (reg is None) or (reg.rw == _AD7124_W):
@@ -1086,11 +1259,16 @@ class Ad7124:
 
         return 0 # Maybe this should be done differently? Exception?
     
-    def read_register(self, reg: Ad7124_Register):
-        '''
-        Reads the value of the specified register after checking if the
-        device is ready. Updates reg.value in place
-        '''
+    def read_register(self, reg: Ad7124_Register) -> int:
+        """
+        Read a register with ready-check.
+        
+        Waits for SPI ready before reading. Updates register value in-place.
+        
+        :param Ad7124_Register reg: Register to read
+        
+        :return: 0 on success, error code on failure
+        """
         #print("read_register")
         
         # direct translation from C++ library, probably not the best way to do
@@ -1104,11 +1282,16 @@ class Ad7124:
     
     
     
-    def no_check_write_register(self, reg: Ad7124_Register):
-        '''
-        Writes the value of the specified register without checking if the
-        device is ready. 
-        '''
+    def no_check_write_register(self, reg: Ad7124_Register) -> int:
+        """
+        Write a register without checking if device is ready.
+        
+        Internal method. Use write_register() for safer operation.
+        
+        :param Ad7124_Register reg: Register to write
+        
+        :return: 0 on success, error code on failure
+        """
         #print("no_check_write_register:")
         
         if (reg is None) or (reg.rw == _AD7124_R):
@@ -1143,11 +1326,16 @@ class Ad7124:
         return 0        
         
 
-    def write_register(self, reg: Ad7124_Register):
-        '''
-        Writes the value of the specified register after checking if the
-        device is ready. 
-        '''
+    def write_register(self, reg: Ad7124_Register) -> int:
+        """
+        Write a register with ready-check.
+        
+        Waits for SPI ready before writing.
+        
+        :param Ad7124_Register reg: Register to write
+        
+        :return: 0 on success, error code on failure
+        """
         #print("write_register")
         
         ret = self.wait_for_spi_ready()
@@ -1158,34 +1346,21 @@ class Ad7124:
 
 
     def spi_write_and_read(self, buff: bytearray):
-        '''Writes and reads data via SPI'''
-                
-        # The C++ version of the library uses SPI transactions here, but I don't
-        # know how to do that in MicroPython, if it's possible at all.  So, for
-        # now, I'm just going to skip that part and write/read the data directly.
-
-        # Begin transaction here   
-
-        # Interestingly, Circuit Python seems to deal with this by using a lock
-        # and then configuring the bus. 
-                
-        while not self.spi.try_lock():
-            pass
-
-        try:
-            self.spi.configure(baudrate=self.baudrate, phase=1, polarity=1)
-            self.cs.value = False
-            self.spi.write_readinto(buff, buff) #This worked for micropython, but will it work for circuitpy?
-            self.cs.value = True
-        finally:
-            self.spi.unlock()
-
-        # End transaction here
+        '''
+        Writes and reads data via SPI using SPIDevice for proper bus locking
+        and chip select management.
+        '''
+        with self.spi_device as spi:
+            spi.write_readinto(buff, buff)
     
-    def wait_for_spi_ready(self):
-        '''
-        Waits for the SPI interface to be ready for read/write.
-        '''
+    def wait_for_spi_ready(self) -> bool:
+        """
+        Wait until the SPI interface is ready.
+        
+        Monitors the SPI error register for ignore errors.
+        
+        :return: True when ready
+        """
         
         #print("wait_for_spi_ready")
         
