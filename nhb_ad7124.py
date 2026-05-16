@@ -41,7 +41,7 @@ Example usage:
     import board
     import busio
     import digitalio
-    from CircuitPy_AD7124 import nhb_ad7124
+    import nhb_ad7124
     
     # Create SPI bus and chip select
     spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)

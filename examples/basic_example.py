@@ -3,7 +3,7 @@ import time
 import board
 import busio
 import digitalio
-from CircuitPy_AD7124 import NHB_AD7124
+import nhb_ad7124
 
 # Filter select bits (4 = Fast)
 FILTER_SELECT_BITS = 4
@@ -15,24 +15,24 @@ cs_pin = digitalio.DigitalInOut(board.A0)
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 
 # Initialize the ADC with SPI bus and chip select pin
-adc = NHB_AD7124.Ad7124(spi, cs_pin, baudrate=4000000)
+adc = nhb_ad7124.Ad7124(spi, cs_pin, baudrate=4000000)
 
 print("Trying to read ID register...")
 ID = adc.get_ID()
 print(f"ADC chip ID: {hex(ID)}")
 
 # Configure the ADC in full power mode
-adc.set_adc_control(NHB_AD7124.AD7124_OpMode_SingleConv,
-                    NHB_AD7124.AD7124_FullPower, True)
+adc.set_adc_control(nhb_ad7124.AD7124_OpMode_SingleConv,
+                    nhb_ad7124.AD7124_FullPower, True)
 
 # Configure Setup 0 for load cells:
 # - Use the external reference tied to the excitation voltage (2.5V reg)
 # - Set a gain of 128 for a bipolar measurement of +/- 19.53 mv
-adc.setup[0].set_config(NHB_AD7124.AD7124_Ref_ExtRef1, NHB_AD7124.AD7124_Gain_128, True)
+adc.setup[0].set_config(nhb_ad7124.AD7124_Ref_ExtRef1, nhb_ad7124.AD7124_Gain_128, True)
 
 # Configure Setup 1 for using the internal temperature sensor
 # - Use internal reference and a gain of 1
-adc.setup[1].set_config(NHB_AD7124.AD7124_Ref_Internal, NHB_AD7124.AD7124_Gain_1, True)
+adc.setup[1].set_config(nhb_ad7124.AD7124_Ref_Internal, nhb_ad7124.AD7124_Gain_1, True)
 
 # Set filter type and data rate select bits (defined above)
 #  The combination of filter type and filter select bits affects the final
@@ -40,15 +40,15 @@ adc.setup[1].set_config(NHB_AD7124.AD7124_Ref_Internal, NHB_AD7124.AD7124_Gain_1
 #  option. The filter select bits are a number between 1 and 2048. A smaller
 #  number will give a faster conversion, but allow more noise. Refer to the
 #  datasheet for details, it can get complicated.
-adc.setup[0].set_filter(NHB_AD7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
-adc.setup[1].set_filter(NHB_AD7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
+adc.setup[0].set_filter(nhb_ad7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
+adc.setup[1].set_filter(nhb_ad7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
 
 # Set channel 0 to use pins AIN0(+)/AIN1(-)
-adc.set_channel(0, 0, NHB_AD7124.AD7124_Input_AIN0, NHB_AD7124.AD7124_Input_AIN1, True)
+adc.set_channel(0, 0, nhb_ad7124.AD7124_Input_AIN0, nhb_ad7124.AD7124_Input_AIN1, True)
 
 # Set channel 1 to use the internal temperature sensor for the positive input
 # and AVSS for the negative
-adc.set_channel(1, 1, NHB_AD7124.AD7124_Input_TEMP, NHB_AD7124.AD7124_Input_AVSS, True)
+adc.set_channel(1, 1, nhb_ad7124.AD7124_Input_TEMP, nhb_ad7124.AD7124_Input_AVSS, True)
 
 print("Turning ExV on")
 adc.setPWRSW(True)

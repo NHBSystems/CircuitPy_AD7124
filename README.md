@@ -1,7 +1,7 @@
-# CircuitPy_AD7124
+# NHB_CircuitPython_AD7124
 Circuit Python library for using the Analog Devices AD7124-4, 24 bit ADC
 
-The AD7124-4 is a 4 channel, 24 bit, differential ADC (it can also be configured for up to 7 single ended channels). This library is a port of the [NHB_AD7124 Arduino library](https://github.com/NHBSystems/NHB_AD7124) to Circuit Python. The library is currently written in all Python and is a bit of a memory hog as it is, but it gets the job done. I am new to Circuit Python, so I'm sure there is plenty of room for improvement and optimization.  
+The AD7124-4 is a 4 channel, 24 bit, differential ADC (it can also be configured for up to 7 single ended channels). This library is a port of the [NHB_AD7124 Arduino library](https://github.com/NHBSystems/NHB_AD7124) to Circuit Python. This is a fairly complex chip with a lot of options, so it's a pretty big library. It is currently written in all Python and is a bit of a memory hog as it is, but it gets the job done. I am new to Circuit Python, so I'm sure there is room for improvement and optimization.  
 
 Like the original Arduino library, this was originally written for use 
 with the [NHB AD7124 Analog Sensor FeatherWing](https://www.tindie.com/products/24680/), but there is no reason it couldn't be used with a raw chip in your own design.
@@ -10,7 +10,13 @@ So far I have only tested this library on an ESP32-C3, but it
 really should work with any architectures that has a working SPI
 implementation.   
 
-WARNING, THIS IS A WORK IN PROGRESS
+THIS IS A WORK IN PROGRESS
+
+**NOTE:** There have been a few minor breaking changes that will need to be accounted for before older code will run. These changes were made to be more consistent with other CircuitPython libraries.
+- The order of the ```__init__``` parameters has changed. Now ```spi``` and ```cs_pin``` have been swapped. It is now ```(spi, cs_pin, baudrate=4000000)```
+- The ```cs_pin``` argument now takes a DigitalInOut object 
+- The library has been changed to all lower case so you will have to do a find->replace on old code. Sorry about that, but I think it's for the best.
+- The repo name will be changed to NHB_CircuitPython_AD7124. This shouldn't affect any code, but be aware.
 
 
 Basic API  
@@ -38,7 +44,7 @@ So, to create an instance...
 import board
 import busio
 import digitalio
-from CircuitPy_AD7124 import NHB_AD7124
+import nhb_ad7124
 
 # Create SPI bus
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
@@ -47,7 +53,7 @@ spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 cs = digitalio.DigitalInOut(board.A0)
 
 # Create ADC instance
-adc = NHB_AD7124.Ad7124(spi, cs)
+adc = nhb_ad7124.Ad7124(spi, cs)
 ```
 
 
@@ -228,7 +234,7 @@ import time
 import board
 import busio
 import digitalio
-from CircuitPy_AD7124 import NHB_AD7124
+import nhb_ad7124
 
 # Filter select bits (4 = Fast)
 FILTER_SELECT_BITS = 4
@@ -240,35 +246,35 @@ cs_pin = digitalio.DigitalInOut(board.A0)
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 
 # Initialize the ADC with SPI bus and chip select pin
-adc = NHB_AD7124.Ad7124(spi, cs_pin, baudrate=4000000)
+adc = nhb_ad7124.Ad7124(spi, cs_pin, baudrate=4000000)
 
 print("Trying to read ID register...")
 ID = adc.get_ID()
 print(f"ADC chip ID: {hex(ID)}")
 
 # Configure the ADC in full power mode
-adc.set_adc_control(NHB_AD7124.AD7124_OpMode_SingleConv,
-                    NHB_AD7124.AD7124_FullPower, True)
+adc.set_adc_control(nhb_ad7124.AD7124_OpMode_SingleConv,
+                    nhb_ad7124.AD7124_FullPower, True)
 
 # Configure Setup 0 for load cells:
 # - Use the external reference tied to the excitation voltage (2.5V reg)
 # - Set a gain of 128 for a bipolar measurement of +/- 19.53 mv
-adc.setup[0].set_config(NHB_AD7124.AD7124_Ref_ExtRef1, NHB_AD7124.AD7124_Gain_128, True)
+adc.setup[0].set_config(nhb_ad7124.AD7124_Ref_ExtRef1, nhb_ad7124.AD7124_Gain_128, True)
 
 # Configure Setup 1 for using the internal temperature sensor
 # - Use internal reference and a gain of 1
-adc.setup[1].set_config(NHB_AD7124.AD7124_Ref_Internal, NHB_AD7124.AD7124_Gain_1, True)
+adc.setup[1].set_config(nhb_ad7124.AD7124_Ref_Internal, nhb_ad7124.AD7124_Gain_1, True)
 
 # Set filter type and data rate select bits
-adc.setup[0].set_filter(NHB_AD7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
-adc.setup[1].set_filter(NHB_AD7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
+adc.setup[0].set_filter(nhb_ad7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
+adc.setup[1].set_filter(nhb_ad7124.AD7124_Filter_SINC3, FILTER_SELECT_BITS)
 
 # Set channel 0 to use pins AIN0(+)/AIN1(-)
-adc.set_channel(0, 0, NHB_AD7124.AD7124_Input_AIN0, NHB_AD7124.AD7124_Input_AIN1, True)
+adc.set_channel(0, 0, nhb_ad7124.AD7124_Input_AIN0, nhb_ad7124.AD7124_Input_AIN1, True)
 
 # Set channel 1 to use the internal temperature sensor for the positive input
 # and AVSS for the negative
-adc.set_channel(1, 1, NHB_AD7124.AD7124_Input_TEMP, NHB_AD7124.AD7124_Input_AVSS, True)
+adc.set_channel(1, 1, nhb_ad7124.AD7124_Input_TEMP, nhb_ad7124.AD7124_Input_AVSS, True)
 
 print("Turning ExV on")
 adc.setPWRSW(True)
@@ -284,35 +290,4 @@ while True:
     print(f"IC Temp = {ic_temp:.2f}")
         
     time.sleep(0.1)
-```
-
-
-
-# Set channel 0 to use pins AIN0(+)/AIN1(-)
-adc.set_channel(0, 0, NHB_AD7124.AD7124_Input_AIN0, NHB_AD7124.AD7124_Input_AIN1, True)
-
-# Set channel 1 to use the internal temperature sensor for the positive input
-# and AVSS for the negative
-adc.set_channel(1, 1, NHB_AD7124.AD7124_Input_TEMP, NHB_AD7124.AD7124_Input_AVSS, True) #IC Temp
-
-
-print("Turning ExV on")
-adc.setPWRSW(True)
-time.sleep(0.2) # No sleep_ms() in CircuitPy
-
-
-print("Now try to get some readings...")
-
-
-while True:
-    
-    lc_reading = adc.read_fb(0, 2.5, 5.00)  # Read full brideg sensor (Chan, Ex V, Scaling)
-    #reading = adc.read_volts(0)         # Or use this to just read the voltage
-    print(f"Loadcell = {lc_reading:.4f}", end=',')
-    
-    ic_temp = adc.read_ic_temp(1)       
-    print(f" IC Temp = {ic_temp:.2f}")
-        
-    time.sleep(0.1) # No sleep_ms() in CircuitPy 
-
 ```
